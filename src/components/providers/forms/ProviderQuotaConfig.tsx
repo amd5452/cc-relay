@@ -6,9 +6,42 @@ import { Switch } from "@/components/ui/switch";
 
 /** 订阅配额接力配置（对应 providers 表的真实列）。 */
 export interface ProviderQuotaConfigValue {
+  /** 原始 token 数（字符串形式）。界面以 M 为单位展示，本字段始终是原始值。 */
   maxTokensCycle?: string;
   cycleDurationHours?: string;
   payAsYouGo: boolean;
+}
+
+/**
+ * 界面上「周期 Token 上限」以 **M（百万 token）** 为单位，数据库里仍存原始 token 数。
+ *
+ * 换算**只在本组件内部发生**，对外的 `quota.maxTokensCycle` 始终是原始值——
+ * 这样后端与各表单的状态语义都不用改，也不存在「某个表单忘了换算」导致同一字段
+ * 在不同表单里含义不同的风险。
+ */
+const TOKENS_PER_MILLION = 1_000_000;
+
+/** 原始 token 数 → 界面显示的 M 数值。 */
+function rawTokensToM(raw: string | undefined): string {
+  if (!raw) return "";
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return "";
+  // toFixed 去掉浮点尾巴（如 1.2345670000000001），再 Number() 去掉多余的零
+  return String(Number((parsed / TOKENS_PER_MILLION).toFixed(6)));
+}
+
+/**
+ * 界面输入的 M 数值 → 原始 token 数。
+ *
+ * 必须 `Math.round`：`1.234567 * 1e6` 在 IEEE754 下可能得到 1234566.9999999998，
+ * 而额度比较是 `已用 < 上限`，差 1 就足以让边界行为错乱。
+ */
+function mToRawTokens(millions: string): string | undefined {
+  const trimmed = millions.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return String(Math.round(parsed * TOKENS_PER_MILLION));
 }
 
 interface ProviderQuotaConfigProps {
@@ -19,8 +52,8 @@ interface ProviderQuotaConfigProps {
 /**
  * 订阅配额接力设置卡片。
  *
- * 独立于「计费配置」：增量模式应用（OpenCode / OpenClaw / Hermes）不展示计费
- * 配置，但仍需要按周期额度做接力，因此本卡片单独渲染，不走 ProviderAdvancedConfig。
+ * 所有支持本地路由的应用共用此卡片；Claude Desktop / GrokBuild 走各自独立的
+ * 表单，也在那边引用它，因此单位换算与文案只有这一处实现。
  */
 export function ProviderQuotaConfig({
   quota,
@@ -48,21 +81,27 @@ export function ProviderQuotaConfig({
             {t("providerAdvanced.maxTokensCycle", {
               defaultValue: "周期 Token 上限",
             })}
+            <span className="font-normal text-muted-foreground">
+              {t("providerAdvanced.maxTokensCycleUnit", {
+                defaultValue: "（单位：M）",
+              })}
+            </span>
           </Label>
           <Input
             id="quota-max-tokens-cycle"
             type="number"
             min="0"
-            inputMode="numeric"
-            value={quota.maxTokensCycle ?? ""}
+            step="any"
+            inputMode="decimal"
+            value={rawTokensToM(quota.maxTokensCycle)}
             onChange={(e) =>
               onChange({
                 ...quota,
-                maxTokensCycle: e.target.value || undefined,
+                maxTokensCycle: mToRawTokens(e.target.value),
               })
             }
             placeholder={t("providerAdvanced.maxTokensCyclePlaceholder", {
-              defaultValue: "留空表示不限量",
+              defaultValue: "如 1 表示 100 万",
             })}
           />
         </div>
