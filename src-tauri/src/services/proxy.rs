@@ -1133,9 +1133,25 @@ impl ProxyService {
             .await
             .map(|c| c.enabled)
             .unwrap_or(false);
-        // OpenCode and OpenClaw don't support proxy features, always return false
-        let opencode_enabled = false;
-        let openclaw_enabled = false;
+        // OpenCode / OpenClaw / Hermes 与其它应用同源读取：enabled 即代表已接管。
+        let opencode_enabled = self
+            .db
+            .get_proxy_config_for_app("opencode")
+            .await
+            .map(|c| c.enabled)
+            .unwrap_or(false);
+        let openclaw_enabled = self
+            .db
+            .get_proxy_config_for_app("openclaw")
+            .await
+            .map(|c| c.enabled)
+            .unwrap_or(false);
+        let hermes_enabled = self
+            .db
+            .get_proxy_config_for_app("hermes")
+            .await
+            .map(|c| c.enabled)
+            .unwrap_or(false);
 
         Ok(ProxyTakeoverStatus {
             claude: claude_enabled,
@@ -1144,6 +1160,7 @@ impl ProxyService {
             grokbuild: grokbuild_enabled,
             opencode: opencode_enabled,
             openclaw: openclaw_enabled,
+            hermes: hermes_enabled,
         })
     }
 
@@ -1426,6 +1443,10 @@ impl ProxyService {
             AppType::Codex => self.read_codex_live()?,
             AppType::Gemini => self.read_gemini_live()?,
             AppType::GrokBuild => self.read_grok_live()?,
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                crate::services::provider::ProviderService::read_live_settings(app_type.clone())
+                    .map_err(|e| format!("读取 {} Live 配置失败: {e}", app_type.as_str()))?
+            }
             _ => return Err("该应用不支持代理功能".to_string()),
         };
 
@@ -1901,6 +1922,11 @@ impl ProxyService {
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
             AppType::GrokBuild => ("grokbuild", self.read_grok_live()?),
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => (
+                app_type.as_str(),
+                crate::services::provider::ProviderService::read_live_settings(app_type.clone())
+                    .map_err(|e| format!("读取 {} Live 配置失败: {e}", app_type.as_str()))?,
+            ),
             _ => return Err("该应用不支持代理功能".to_string()),
         };
 
@@ -1964,6 +1990,31 @@ impl ProxyService {
         let proxy_codex_base_url = format!("{}/v1", proxy_origin.trim_end_matches('/'));
 
         Ok((proxy_url, proxy_codex_base_url))
+    }
+
+    /// 返回某应用实际写入其 live 配置的代理地址（含该应用独有的路径前缀）。
+    ///
+    /// **唯一事实来源**：takeover 的写入与界面展示都必须调用它。否则两处各维护
+    /// 一份映射，一旦漂移，界面就会显示一个并不存在的地址——用户照着它去请求时
+    /// 会打到错误的路由，症状和"用错了供应商"一模一样。
+    ///
+    /// `proxy_origin` 是 `build_proxy_urls` 产出的 `http://host:port`（不含路径）。
+    /// 返回 `None` 表示该应用不支持本地路由。
+    pub fn proxy_base_url_for_app(app_type: &AppType, proxy_origin: &str) -> Option<String> {
+        let origin = proxy_origin.trim_end_matches('/');
+        Some(match app_type {
+            AppType::Claude | AppType::Gemini => origin.to_string(),
+            AppType::Codex => format!("{origin}/v1"),
+            AppType::GrokBuild => format!("{origin}/grokbuild/v1"),
+            AppType::ClaudeDesktop => format!(
+                "{origin}{}",
+                crate::claude_desktop_config::CLAUDE_DESKTOP_PROXY_PREFIX
+            ),
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                format!("{origin}/{}/v1", app_type.as_str())
+            }
+            AppType::Pi => return None,
+        })
     }
 
     /// Grok Build live 是否具备可接管的自定义模型表。
@@ -2116,9 +2167,73 @@ impl ProxyService {
                 self.write_grok_live(&live_config)?;
                 log::info!("Grok Build Live 配置已接管，代理地址: {proxy_grok_base_url}");
             }
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                let proxy_app_base_url = format!(
+                    "{}/{}/v1",
+                    proxy_url.trim_end_matches('/'),
+                    app_type.as_str()
+                );
+                self.takeover_additive_live_config(app_type, &proxy_app_base_url)?;
+                log::info!(
+                    "{} Live 配置已接管，代理地址: {proxy_app_base_url}",
+                    app_type.as_str()
+                );
+            }
             _ => return Err("该应用不支持代理功能".to_string()),
         }
 
+        Ok(())
+    }
+
+    /// 增量模式应用（OpenCode / OpenClaw / Hermes）的 Live 接管。
+    ///
+    /// 这些应用是「多个供应商共存于同一份原生配置」的增量模式，因此接管方式是：
+    /// 取当前供应商的配置，把其中的上游地址字段改写成代理地址后写回 Live。
+    /// 复用既有的 live 写入能力，不为新应用单独实现配置文件格式处理。
+    fn takeover_additive_live_config(
+        &self,
+        app_type: &AppType,
+        proxy_base_url: &str,
+    ) -> Result<(), String> {
+        let provider = self.require_current_provider_for_app(app_type)?;
+        let mut taken_over = provider.clone();
+        Self::override_provider_base_url(
+            &mut taken_over.settings_config,
+            app_type,
+            proxy_base_url,
+        )?;
+        crate::services::provider::live::write_live_snapshot(app_type, &taken_over)
+            .map_err(|e| format!("写入 {} 接管配置失败: {e}", app_type.as_str()))?;
+        Ok(())
+    }
+
+    /// 改写供应商配置里的上游地址字段。各应用的字段位置不同：
+    /// Hermes 用 `base_url`，OpenClaw 用 `baseUrl`（camelCase），
+    /// OpenCode 嵌在 `options.baseURL`。
+    fn override_provider_base_url(
+        config: &mut Value,
+        app_type: &AppType,
+        proxy_base_url: &str,
+    ) -> Result<(), String> {
+        match app_type {
+            AppType::Hermes => {
+                config["base_url"] = json!(proxy_base_url);
+                config["api_key"] = json!(PROXY_TOKEN_PLACEHOLDER);
+            }
+            AppType::OpenClaw => {
+                config["baseUrl"] = json!(proxy_base_url);
+                config["apiKey"] = json!(PROXY_TOKEN_PLACEHOLDER);
+            }
+            AppType::OpenCode => {
+                let options = config
+                    .get_mut("options")
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| "OpenCode 供应商配置缺少 options 字段".to_string())?;
+                options.insert("baseURL".to_string(), json!(proxy_base_url));
+                options.insert("apiKey".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+            }
+            _ => return Err(format!("{} 不支持增量接管", app_type.as_str())),
+        }
         Ok(())
     }
 
@@ -2357,8 +2472,25 @@ impl ProxyService {
             AppType::Codex => self.write_codex_restore_backup(config),
             AppType::Gemini => self.write_gemini_live(config),
             AppType::GrokBuild => self.write_grok_live(config),
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                self.restore_additive_live_for_app(app_type)
+            }
             _ => Err("该应用不支持代理功能".to_string()),
         }
+    }
+
+    /// 增量模式应用（OpenCode / OpenClaw / Hermes）的 Live 恢复。
+    ///
+    /// 这些应用的 Live 备份是整份原生配置，直接写回会覆盖同一文件里的其它供应商，
+    /// 因此统一用当前供应商的 SSOT 重建 Live。
+    fn restore_additive_live_for_app(&self, app_type: &AppType) -> Result<(), String> {
+        if self.restore_live_from_ssot_for_app(app_type)? {
+            return Ok(());
+        }
+        Err(format!(
+            "{} 缺少可用的当前供应商，无法重建 Live 配置",
+            app_type.as_str()
+        ))
     }
 
     pub fn detect_takeover_in_live_config_for_app(&self, app_type: &AppType) -> bool {
@@ -2379,6 +2511,25 @@ impl ProxyService {
                 Ok(config) => Self::is_grok_live_taken_over(&config),
                 Err(_) => false,
             },
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                crate::services::provider::ProviderService::read_live_settings(app_type.clone())
+                    .map(|config| Self::contains_proxy_placeholder(&config))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
+    /// 递归判断 JSON 里是否存在等于代理占位符的字符串值。
+    ///
+    /// 增量模式应用（OpenCode / OpenClaw / Hermes）的 Live 文件里同时存在多个
+    /// 供应商条目，且各自嵌套层级不同，因此不做路径假设，直接全树查找这个
+    /// 独一无二的占位常量。
+    fn contains_proxy_placeholder(value: &Value) -> bool {
+        match value {
+            Value::String(text) => text == PROXY_TOKEN_PLACEHOLDER,
+            Value::Array(items) => items.iter().any(Self::contains_proxy_placeholder),
+            Value::Object(map) => map.values().any(Self::contains_proxy_placeholder),
             _ => false,
         }
     }
@@ -2435,6 +2586,9 @@ impl ProxyService {
             AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
             AppType::GrokBuild => self.cleanup_grok_takeover_placeholders_in_live(),
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                self.restore_additive_live_for_app(app_type)
+            }
             _ => Ok(()),
         }
     }
@@ -2785,6 +2939,9 @@ impl ProxyService {
             AppType::Codex => Self::is_codex_live_taken_over(config),
             AppType::Gemini => Self::is_gemini_live_taken_over(config),
             AppType::GrokBuild => Self::is_grok_live_taken_over(config),
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+                Self::contains_proxy_placeholder(config)
+            }
             _ => false,
         }
     }

@@ -1500,7 +1500,15 @@
     "pricingModelSourceInherit": "グローバル設定を継承",
     "pricingModelSourceRequest": "リクエストモデル",
     "pricingModelSourceResponse": "レスポンスモデル",
-    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
+    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択",
+    "quotaRelay": "サブスク配額リレー",
+    "quotaRelayDesc": "ローカルルーティングを有効にすると、現在の周期の配額を使い切った時点で、残りのあるプロバイダーへ自動でリレーします。",
+    "maxTokensCycle": "周期あたりのトークン上限",
+    "maxTokensCyclePlaceholder": "空欄なら無制限",
+    "cycleDurationHours": "周期の長さ（時間）",
+    "cycleDurationHoursPlaceholder": "例: 5",
+    "payAsYouGo": "従量課金フォールバック",
+    "payAsYouGoHint": "周期制の配額がすべて尽きた場合のみ使用されます。周期がリセットされると自動で戻ります。"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

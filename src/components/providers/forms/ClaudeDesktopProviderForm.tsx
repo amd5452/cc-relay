@@ -31,6 +31,7 @@ import { ApiKeySection } from "./shared/ApiKeySection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { ProviderQuotaConfig } from "./ProviderQuotaConfig";
 import { useApiKeyLink } from "./hooks/useApiKeyLink";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type {
@@ -68,6 +69,11 @@ export type ClaudeDesktopProviderFormValues = ProviderFormData & {
   meta?: ProviderMeta;
   providerKey?: string;
   suggestedDefaults?: OpenClawSuggestedDefaults;
+  /** 订阅配额接力字段（对应 providers 表真实列）。 */
+  maxTokensCycle?: number;
+  cycleDurationHours?: number;
+  cycleStartTimestamp?: number;
+  payAsYouGo?: boolean;
 };
 
 type ApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
@@ -91,6 +97,11 @@ export interface ClaudeDesktopProviderFormProps {
     meta?: ProviderMeta;
     icon?: string;
     iconColor?: string;
+    /** 订阅配额接力字段（对应 providers 表真实列）。 */
+    maxTokensCycle?: number;
+    cycleDurationHours?: number;
+    cycleStartTimestamp?: number;
+    payAsYouGo?: boolean;
   };
   showButtons?: boolean;
   onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
@@ -280,6 +291,22 @@ export function ClaudeDesktopProviderForm({
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
+  /** 订阅配额接力：周期上限 / 周期时长 / 按量付费兜底。 */
+  const [quotaConfig, setQuotaConfig] = useState<{
+    maxTokensCycle?: string;
+    cycleDurationHours?: string;
+    payAsYouGo: boolean;
+  }>(() => ({
+    maxTokensCycle:
+      initialData?.maxTokensCycle !== undefined
+        ? String(initialData.maxTokensCycle)
+        : undefined,
+    cycleDurationHours:
+      initialData?.cycleDurationHours !== undefined
+        ? String(initialData.cycleDurationHours)
+        : undefined,
+    payAsYouGo: initialData?.payAsYouGo ?? false,
+  }));
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     "custom",
   );
@@ -595,6 +622,15 @@ export function ClaudeDesktopProviderForm({
         meta,
         presetId: activePreset?.id,
         presetCategory: "official",
+        maxTokensCycle:
+          Number(quotaConfig.maxTokensCycle) > 0
+            ? Number(quotaConfig.maxTokensCycle)
+            : undefined,
+        cycleDurationHours:
+          Number(quotaConfig.cycleDurationHours) > 0
+            ? Number(quotaConfig.cycleDurationHours)
+            : undefined,
+        payAsYouGo: quotaConfig.payAsYouGo,
       });
       return;
     }
@@ -821,6 +857,15 @@ export function ClaudeDesktopProviderForm({
       presetCategory: activePreset?.category,
       isPartner: activePreset?.isPartner,
       partnerPromotionKey: activePreset?.partnerPromotionKey,
+      maxTokensCycle:
+        Number(quotaConfig.maxTokensCycle) > 0
+          ? Number(quotaConfig.maxTokensCycle)
+          : undefined,
+      cycleDurationHours:
+        Number(quotaConfig.cycleDurationHours) > 0
+          ? Number(quotaConfig.cycleDurationHours)
+          : undefined,
+      payAsYouGo: quotaConfig.payAsYouGo,
     });
   };
 
@@ -1307,6 +1352,8 @@ export function ClaudeDesktopProviderForm({
             />
           </>
         )}
+
+        <ProviderQuotaConfig quota={quotaConfig} onChange={setQuotaConfig} />
 
         {showButtons && (
           <div className="flex justify-end gap-2">

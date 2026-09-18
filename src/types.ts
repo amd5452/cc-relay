@@ -28,6 +28,14 @@ export interface Provider {
   iconColor?: string; // 图标颜色（Hex 格式，如 "#00A67E"）
   // 是否加入故障转移队列
   inFailoverQueue?: boolean;
+  // 订阅配额接力：周期内 Token 上限（如 1000000）。留空表示不限量。
+  maxTokensCycle?: number;
+  // 订阅配额接力：周期时长（小时，如 5）
+  cycleDurationHours?: number;
+  // 订阅配额接力：当前周期起始时间戳（Unix 秒），由本地代理在周期重置时回写
+  cycleStartTimestamp?: number;
+  // 订阅配额接力：是否作为「按量付费」兜底供应商
+  payAsYouGo?: boolean;
 }
 
 export interface AppConfig {

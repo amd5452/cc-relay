@@ -92,6 +92,7 @@ import {
   ProviderAdvancedConfig,
   type PricingModelSourceOption,
 } from "./ProviderAdvancedConfig";
+import { ProviderQuotaConfig } from "./ProviderQuotaConfig";
 import {
   useProviderCategory,
   useApiKeyState,
@@ -267,6 +268,11 @@ export interface ProviderFormProps {
     meta?: ProviderMeta;
     icon?: string;
     iconColor?: string;
+    /** 订阅配额接力字段（对应 providers 表真实列）。 */
+    maxTokensCycle?: number;
+    cycleDurationHours?: number;
+    cycleStartTimestamp?: number;
+    payAsYouGo?: boolean;
   };
   showButtons?: boolean;
   isProxyTakeover?: boolean;
@@ -379,6 +385,23 @@ function ProviderFormFull({
     ),
   }));
 
+  /** 订阅配额接力：周期上限 / 周期时长 / 按量付费兜底。 */
+  const [quotaConfig, setQuotaConfig] = useState<{
+    maxTokensCycle?: string;
+    cycleDurationHours?: string;
+    payAsYouGo: boolean;
+  }>(() => ({
+    maxTokensCycle:
+      initialData?.maxTokensCycle !== undefined
+        ? String(initialData.maxTokensCycle)
+        : undefined,
+    cycleDurationHours:
+      initialData?.cycleDurationHours !== undefined
+        ? String(initialData.cycleDurationHours)
+        : undefined,
+    payAsYouGo: initialData?.payAsYouGo ?? false,
+  }));
+
   const { category } = useProviderCategory({
     appId,
     selectedPresetId,
@@ -410,6 +433,17 @@ function ProviderFormFull({
       pricingModelSource: normalizePricingSource(
         initialData?.meta?.pricingModelSource,
       ),
+    });
+    setQuotaConfig({
+      maxTokensCycle:
+        initialData?.maxTokensCycle !== undefined
+          ? String(initialData.maxTokensCycle)
+          : undefined,
+      cycleDurationHours:
+        initialData?.cycleDurationHours !== undefined
+          ? String(initialData.cycleDurationHours)
+          : undefined,
+      payAsYouGo: initialData?.payAsYouGo ?? false,
     });
     setSelectedGitHubAccountId(
       resolveManagedAccountId(initialData?.meta, "github_copilot"),
@@ -1845,6 +1879,19 @@ function ProviderFormFull({
 
     payload.meta = nextMeta;
 
+    // 订阅配额接力字段：真实数据库列，不走 meta。
+    const parsedMaxTokens = quotaConfig.maxTokensCycle?.trim();
+    payload.maxTokensCycle =
+      parsedMaxTokens && Number(parsedMaxTokens) > 0
+        ? Number(parsedMaxTokens)
+        : undefined;
+    const parsedDuration = quotaConfig.cycleDurationHours?.trim();
+    payload.cycleDurationHours =
+      parsedDuration && Number(parsedDuration) > 0
+        ? Number(parsedDuration)
+        : undefined;
+    payload.payAsYouGo = quotaConfig.payAsYouGo;
+
     await onSubmit(payload);
   };
 
@@ -2783,7 +2830,17 @@ function ProviderFormFull({
               <ProviderAdvancedConfig
                 pricingConfig={pricingConfig}
                 onPricingConfigChange={setPricingConfig}
+                quotaConfig={quotaConfig}
+                onQuotaConfigChange={setQuotaConfig}
               />
+            )}
+
+          {/* 增量模式应用不展示计费配置，但同样需要配额接力设置 */}
+          {!isAnyOmoCategory &&
+            (appId === "opencode" ||
+              appId === "openclaw" ||
+              appId === "hermes") && (
+              <ProviderQuotaConfig quota={quotaConfig} onChange={setQuotaConfig} />
             )}
 
           {showButtons && (
@@ -2871,4 +2928,9 @@ export type ProviderFormValues = ProviderFormData & {
   meta?: ProviderMeta;
   providerKey?: string; // OpenCode/OpenClaw: user-defined provider key
   suggestedDefaults?: OpenClawSuggestedDefaults; // OpenClaw: suggested default model configuration
+  /** 订阅配额接力字段（对应 providers 表的真实列，不走 meta）。 */
+  maxTokensCycle?: number;
+  cycleDurationHours?: number;
+  cycleStartTimestamp?: number;
+  payAsYouGo?: boolean;
 };

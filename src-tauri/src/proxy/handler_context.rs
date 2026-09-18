@@ -143,6 +143,24 @@ impl RequestContext {
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 
+        // 配额接力：不触碰任何智能体配置文件，仅按订阅额度在内存中重排序链路。
+        // 返回 None 表示没有任何供应商参与配额接力，此时保持原有链路与行为。
+        //
+        // 必须把请求模型传进去：Claude Desktop 的每个供应商各自声明一份 route 表，
+        // 切到一个没声明本次 route 的供应商会直接 400（不可重试），所以要在选路
+        // 阶段就把它排除。
+        let preferred_id = providers.first().map(|p| p.id.clone());
+        let requested_model = (request_model != "unknown").then_some(request_model.as_str());
+        let providers = match crate::proxy::quota_relay::QuotaRelay::relay(
+            &state.db,
+            app_type_str,
+            preferred_id.as_deref(),
+            requested_model,
+        )? {
+            Some(chain) => chain,
+            None => providers,
+        };
+
         let provider = providers
             .first()
             .cloned()

@@ -1500,7 +1500,15 @@
     "pricingModelSourceInherit": "Inherit global default",
     "pricingModelSourceRequest": "Request model",
     "pricingModelSourceResponse": "Response model",
-    "pricingModelSourceHint": "Choose whether to match pricing by request model or response model"
+    "pricingModelSourceHint": "Choose whether to match pricing by request model or response model",
+    "quotaRelay": "Subscription Quota Relay",
+    "quotaRelayDesc": "With local routing on, traffic relays to the next provider that still has quota left in the current cycle.",
+    "maxTokensCycle": "Tokens per cycle",
+    "maxTokensCyclePlaceholder": "Leave empty for unlimited",
+    "cycleDurationHours": "Cycle length (hours)",
+    "cycleDurationHoursPlaceholder": "e.g. 5",
+    "payAsYouGo": "Pay-as-you-go fallback",
+    "payAsYouGoHint": "Used only after every cycle-based quota is exhausted; switches back automatically once a cycle resets."
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

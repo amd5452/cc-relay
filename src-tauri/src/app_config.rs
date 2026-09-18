@@ -421,10 +421,20 @@ impl AppType {
         )
     }
 
+    /// 该智能体是否支持本地路由接管。
+    ///
+    /// Pi 不在此列：`proxy::providers::get_adapter` 对 Pi 返回 `None`，
+    /// 代理链路本就不支持它，硬接只会得到一个假开关。
     pub fn supports_local_proxy(&self) -> bool {
         matches!(
             self,
-            AppType::Claude | AppType::Codex | AppType::Gemini | AppType::GrokBuild
+            AppType::Claude
+                | AppType::Codex
+                | AppType::Gemini
+                | AppType::GrokBuild
+                | AppType::OpenCode
+                | AppType::OpenClaw
+                | AppType::Hermes
         )
     }
 

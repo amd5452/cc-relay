@@ -808,6 +808,10 @@ function App() {
       meta: provider.meta ? deepClone(provider.meta) : undefined,
       icon: provider.icon,
       iconColor: provider.iconColor,
+      // 订阅配额接力：复制配额设置，但周期起点留空，由代理在首次使用时写入。
+      maxTokensCycle: provider.maxTokensCycle,
+      cycleDurationHours: provider.cycleDurationHours,
+      payAsYouGo: provider.payAsYouGo,
     };
 
     if (

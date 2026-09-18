@@ -763,6 +763,93 @@ pub async fn handle_chat_completions(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    handle_chat_completions_for_app(state, request, AppType::Codex, "Codex", "codex").await
+}
+
+/// OpenCode 的 OpenAI 兼容入口（独立供应商命名空间）。
+pub async fn handle_opencode_chat_completions(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_chat_completions_for_app(state, request, AppType::OpenCode, "OpenCode", "opencode").await
+}
+
+/// OpenClaw 的 OpenAI 兼容入口（独立供应商命名空间）。
+pub async fn handle_openclaw_chat_completions(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_chat_completions_for_app(state, request, AppType::OpenClaw, "OpenClaw", "openclaw").await
+}
+
+/// Hermes 的 OpenAI 兼容入口（独立供应商命名空间）。
+pub async fn handle_hermes_chat_completions(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_chat_completions_for_app(state, request, AppType::Hermes, "Hermes", "hermes").await
+}
+
+/// OpenCode / OpenClaw / Hermes 的 Anthropic Messages 入口。
+///
+/// 这三个应用的上游既可能是 OpenAI 兼容协议，也可能是 Anthropic Messages——
+/// OpenClaw 的 `api: anthropic-messages` 即属后者（见
+/// `proxy::providers::codex::is_anthropic_wire_api`）。走 Anthropic 协议时客户端
+/// 会在 base_url 后追加 `/messages`，因此每个前缀都必须同时注册两种端点，
+/// 否则那类供应商的请求会直接 404。
+pub async fn handle_opencode_messages(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::OpenCode,
+        "OpenCode",
+        "opencode",
+        Some("/opencode"),
+    )
+    .await
+}
+
+pub async fn handle_openclaw_messages(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::OpenClaw,
+        "OpenClaw",
+        "openclaw",
+        Some("/openclaw"),
+    )
+    .await
+}
+
+pub async fn handle_hermes_messages(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::Hermes,
+        "Hermes",
+        "hermes",
+        Some("/hermes"),
+    )
+    .await
+}
+
+/// 各智能体共用的 Chat Completions 处理主体。
+async fn handle_chat_completions_for_app(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
     let uri = parts.uri;
@@ -778,7 +865,7 @@ pub async fn handle_chat_completions(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
@@ -789,7 +876,7 @@ pub async fn handle_chat_completions(
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
-            &AppType::Codex,
+            &app_type,
             method,
             &endpoint,
             body,
@@ -2037,6 +2124,7 @@ fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
         ProxyError::NoAvailableProvider => "cc_switch_no_available_provider",
         ProxyError::AllProvidersCircuitOpen => "cc_switch_all_providers_circuit_open",
         ProxyError::NoProvidersConfigured => "cc_switch_no_providers_configured",
+        ProxyError::QuotaExhausted => "cc_switch_quota_exhausted",
         ProxyError::MaxRetriesExceeded => "cc_switch_max_retries_exceeded",
         ProxyError::ProviderUnhealthy(_) => "cc_switch_provider_unhealthy",
         ProxyError::ConfigError(_) => "cc_switch_config_error",

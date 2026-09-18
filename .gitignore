@@ -29,3 +29,20 @@ copilot-api
 .history
 CODEBUDDY.md
 mainWindow.js
+
+# Rust / Tauri 编译产物
+src-tauri/target/
+target/
+
+# 本地数据库：绝不入库（含用户供应商与用量数据）
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# 本地环境变量覆盖
+.env.*
+!.env.example
+*.local

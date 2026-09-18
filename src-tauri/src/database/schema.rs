@@ -39,6 +39,10 @@ impl Database {
                 meta TEXT NOT NULL DEFAULT '{}',
                 is_current BOOLEAN NOT NULL DEFAULT 0,
                 in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
+                max_tokens_cycle INTEGER,
+                cycle_duration_hours REAL,
+                cycle_start_timestamp INTEGER,
+                pay_as_you_go BOOLEAN NOT NULL DEFAULT 0,
                 PRIMARY KEY (id, app_type)
             )",
             [],
@@ -456,6 +460,16 @@ impl Database {
 
         let result = (|| {
             while version < SCHEMA_VERSION {
+                // v18 -> v19：Provider 配额接力字段 + proxy_config 放开到全部 7 个智能体。
+                // 单独前置处理，与 match 内各版本分支语义等价。
+                if version == 18 {
+                    log::info!("迁移数据库从 v18 到 v19（Provider 配额接力字段 + 本地路由覆盖 7 个智能体）");
+                    Self::migrate_v18_to_v19(conn)?;
+                    Self::set_user_version(conn, 19)?;
+                    version = Self::get_user_version(conn)?;
+                    continue;
+                }
+
                 match version {
                     0 => {
                         log::info!("检测到 user_version=0，迁移到 1（补齐缺失列并设置版本）");
@@ -1596,6 +1610,153 @@ impl Database {
                 "INTEGER",
             )?;
         }
+        Ok(())
+    }
+
+    /// v18 -> v19: Provider 增加「订阅配额接力」字段，并放开 proxy_config 的
+    /// app_type 约束，让本地路由覆盖全部 7 个智能体。
+    ///
+    /// 配额字段只参与本地代理的内存路由判定，绝不写入各家智能体的 live 配置：
+    /// - `max_tokens_cycle`     周期内 Token 上限（NULL / <= 0 表示不限量）
+    /// - `cycle_duration_hours` 周期时长（小时）
+    /// - `cycle_start_timestamp` 当前周期起点（Unix 秒，由代理在重置时回写）
+    /// - `pay_as_you_go`        是否作为按量付费兜底供应商
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        // 1) providers 配额字段。缺表的库（异常/测试夹具）跳过：create_tables 会以含列的新 DDL 建表。
+        if Self::table_exists(conn, "providers")? {
+            Self::add_column_if_missing(conn, "providers", "max_tokens_cycle", "INTEGER")?;
+            Self::add_column_if_missing(conn, "providers", "cycle_duration_hours", "REAL")?;
+            Self::add_column_if_missing(conn, "providers", "cycle_start_timestamp", "INTEGER")?;
+            Self::add_column_if_missing(
+                conn,
+                "providers",
+                "pay_as_you_go",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        // 2) proxy_config 的 CHECK 约束无法用 ALTER 修改，只能重建表。
+        if Self::table_exists(conn, "proxy_config")? {
+            Self::rebuild_proxy_config_without_app_type_check(conn)?;
+        }
+
+        Ok(())
+    }
+
+    /// 重建 proxy_config，去掉 `CHECK (app_type IN (...))` 并把新智能体补进行内。
+    ///
+    /// 采用与 `migrate_v13_to_v14` 相同的策略：按旧表实际拥有的列拷贝，缺列填默认值，
+    /// 这样更早版本的库（例如还没有 app_type / live_takeover_active 的单例表）也能安全升级。
+    fn rebuild_proxy_config_without_app_type_check(conn: &Connection) -> Result<(), AppError> {
+        const NEW_TABLE: &str = "proxy_config_v19";
+
+        conn.execute(&format!("DROP TABLE IF EXISTS {NEW_TABLE}"), [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // DDL 与 create_tables 保持一致，唯一的差别是没有 app_type 的 CHECK 约束。
+        conn.execute(
+            &format!(
+                "CREATE TABLE {NEW_TABLE} (
+                    app_type TEXT PRIMARY KEY,
+                    proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                    listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                    listen_port INTEGER NOT NULL DEFAULT 15721,
+                    enable_logging INTEGER NOT NULL DEFAULT 1,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                    max_retries INTEGER NOT NULL DEFAULT 3,
+                    streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                    streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                    non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                    circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                    circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                    circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                    circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                    circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                    default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                    pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                    live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )"
+            ),
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 逐列探测：旧表有该列就取原值，没有就填默认值。
+        let source_columns = [
+            ("app_type", "'claude'"),
+            ("proxy_enabled", "0"),
+            ("listen_address", "'127.0.0.1'"),
+            ("listen_port", "15721"),
+            ("enable_logging", "1"),
+            ("enabled", "0"),
+            ("auto_failover_enabled", "0"),
+            ("max_retries", "3"),
+            ("streaming_first_byte_timeout", "60"),
+            ("streaming_idle_timeout", "120"),
+            ("non_streaming_timeout", "600"),
+            ("circuit_failure_threshold", "4"),
+            ("circuit_success_threshold", "2"),
+            ("circuit_timeout_seconds", "60"),
+            ("circuit_error_rate_threshold", "0.6"),
+            ("circuit_min_requests", "10"),
+            ("default_cost_multiplier", "'1'"),
+            ("pricing_model_source", "'response'"),
+            ("live_takeover_active", "0"),
+            ("created_at", "datetime('now')"),
+            ("updated_at", "datetime('now')"),
+        ]
+        .into_iter()
+        .map(|(column, fallback)| {
+            Self::has_column(conn, "proxy_config", column).map(|exists| {
+                if exists {
+                    format!("\"{column}\"")
+                } else {
+                    fallback.into()
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?
+        .join(", ");
+
+        let copy_sql = format!(
+            "INSERT INTO {NEW_TABLE} (
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests,
+                default_cost_multiplier, pricing_model_source, live_takeover_active,
+                created_at, updated_at
+            )
+            SELECT {source_columns} FROM proxy_config"
+        );
+        conn.execute(&copy_sql, [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute("DROP TABLE proxy_config", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            &format!("ALTER TABLE {NEW_TABLE} RENAME TO proxy_config"),
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 补齐新增的智能体行，沿用 Codex 的超时/熔断默认值。
+        for app_type in ["opencode", "openclaw", "hermes"] {
+            conn.execute(
+                "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+                    streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                    circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                    circuit_error_rate_threshold, circuit_min_requests)
+                 VALUES (?1, 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+                rusqlite::params![app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
         Ok(())
     }
 

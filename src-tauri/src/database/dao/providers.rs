@@ -23,7 +23,8 @@ impl Database {
     ) -> Result<IndexMap<String, Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue,
+                    max_tokens_cycle, cycle_duration_hours, cycle_start_timestamp, pay_as_you_go
              FROM providers WHERE app_type = ?1
              ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
@@ -42,6 +43,10 @@ impl Database {
                 let icon_color: Option<String> = row.get(9)?;
                 let meta_str: String = row.get(10)?;
                 let in_failover_queue: bool = row.get(11)?;
+                let max_tokens_cycle: Option<i64> = row.get(12)?;
+                let cycle_duration_hours: Option<f64> = row.get(13)?;
+                let cycle_start_timestamp: Option<i64> = row.get(14)?;
+                let pay_as_you_go: bool = row.get(15)?;
 
                 let settings_config =
                     serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
@@ -62,6 +67,10 @@ impl Database {
                         icon,
                         icon_color,
                         in_failover_queue,
+                        max_tokens_cycle,
+                        cycle_duration_hours,
+                        cycle_start_timestamp,
+                        pay_as_you_go,
                     },
                 ))
             })
@@ -134,7 +143,8 @@ impl Database {
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let result = conn.query_row(
-            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue,
+                    max_tokens_cycle, cycle_duration_hours, cycle_start_timestamp, pay_as_you_go
              FROM providers WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],
             |row| {
@@ -149,6 +159,10 @@ impl Database {
                 let icon_color: Option<String> = row.get(8)?;
                 let meta_str: String = row.get(9)?;
                 let in_failover_queue: bool = row.get(10)?;
+                let max_tokens_cycle: Option<i64> = row.get(11)?;
+                let cycle_duration_hours: Option<f64> = row.get(12)?;
+                let cycle_start_timestamp: Option<i64> = row.get(13)?;
+                let pay_as_you_go: bool = row.get(14)?;
 
                 let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
                 let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
@@ -166,6 +180,10 @@ impl Database {
                     icon,
                     icon_color,
                     in_failover_queue,
+                    max_tokens_cycle,
+                    cycle_duration_hours,
+                    cycle_start_timestamp,
+                    pay_as_you_go,
                 })
             },
         );
@@ -175,6 +193,53 @@ impl Database {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(AppError::Database(e.to_string())),
         }
+    }
+
+    /// 统计某供应商自 `since_ts`（Unix 秒）以来累计消耗的 Token 总量。
+    ///
+    /// 口径与用量页保持一致：干净的输入 + 缓存读 + 缓存写 + 输出。
+    /// `fresh_input_sql` 会把上游口径下「本身就含缓存」的 `input_tokens` 归一化
+    /// （codex / gemini / grokbuild 属于这类），因此这里的相加不会重复计数。
+    pub fn sum_provider_tokens_since(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        since_ts: i64,
+    ) -> Result<i64, AppError> {
+        let conn = lock_conn!(self.conn);
+        let fresh = crate::services::sql_helpers::fresh_input_sql("l");
+        let usage_filter = crate::services::usage_stats::effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT COALESCE(SUM({fresh} + l.cache_read_tokens + l.cache_creation_tokens + l.output_tokens), 0)
+             FROM proxy_request_logs l
+             WHERE l.provider_id = ?1 AND l.app_type = ?2 AND l.created_at >= ?3
+               AND {usage_filter}"
+        );
+        let total: i64 = conn
+            .query_row(&sql, params![provider_id, app_type, since_ts], |row| {
+                row.get(0)
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(total)
+    }
+
+    /// 回写供应商的周期起点（Unix 秒）。
+    ///
+    /// 由本地代理在「周期窗口过期」或「首次启用额度」时调用。这是配额接力
+    /// 唯一的写库动作，且只写 CC 自己的数据库，绝不触碰各智能体的 live 配置。
+    pub fn set_provider_cycle_start(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+        timestamp: i64,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET cycle_start_timestamp = ?1 WHERE id = ?2 AND app_type = ?3",
+            params![timestamp, provider_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
     }
 
     pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
@@ -212,8 +277,12 @@ impl Database {
                     icon_color = ?9,
                     meta = ?10,
                     is_current = ?11,
-                    in_failover_queue = ?12
-                WHERE id = ?13 AND app_type = ?14",
+                    in_failover_queue = ?12,
+                    max_tokens_cycle = ?13,
+                    cycle_duration_hours = ?14,
+                    cycle_start_timestamp = ?15,
+                    pay_as_you_go = ?16
+                WHERE id = ?17 AND app_type = ?18",
                 params![
                     provider.name,
                     serde_json::to_string(&provider.settings_config).map_err(|e| {
@@ -231,6 +300,10 @@ impl Database {
                     )))?,
                     is_current,
                     in_failover_queue,
+                    provider.max_tokens_cycle,
+                    provider.cycle_duration_hours,
+                    provider.cycle_start_timestamp,
+                    provider.pay_as_you_go,
                     provider.id,
                     app_type,
                 ],
@@ -240,8 +313,9 @@ impl Database {
             tx.execute(
                 "INSERT INTO providers (
                     id, app_type, name, settings_config, website_url, category,
-                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue,
+                    max_tokens_cycle, cycle_duration_hours, cycle_start_timestamp, pay_as_you_go
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
                 params![
                     provider.id,
                     app_type,
@@ -259,6 +333,10 @@ impl Database {
                         .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?,
                     is_current,
                     in_failover_queue,
+                    provider.max_tokens_cycle,
+                    provider.cycle_duration_hours,
+                    provider.cycle_start_timestamp,
+                    provider.pay_as_you_go,
                 ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -331,8 +409,9 @@ impl Database {
             "INSERT INTO providers (
                 id, app_type, name, settings_config, website_url, category,
                 created_at, sort_index, notes, icon, icon_color, meta,
-                is_current, in_failover_queue
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                is_current, in_failover_queue,
+                max_tokens_cycle, cycle_duration_hours, cycle_start_timestamp, pay_as_you_go
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 provider.id,
                 app_type,
@@ -352,6 +431,10 @@ impl Database {
                 })?,
                 is_current,
                 in_failover_queue,
+                provider.max_tokens_cycle,
+                provider.cycle_duration_hours,
+                provider.cycle_start_timestamp,
+                provider.pay_as_you_go,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -598,6 +681,10 @@ impl Database {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            max_tokens_cycle: None,
+            cycle_duration_hours: None,
+            cycle_start_timestamp: None,
+            pay_as_you_go: false,
         }))
     }
 

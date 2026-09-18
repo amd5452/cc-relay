@@ -398,6 +398,35 @@ impl ProxyServer {
             .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
+            // OpenCode / OpenClaw / Hermes：OpenAI 兼容协议，各带独立前缀，
+            // 以便命中各自的供应商命名空间（用量与配额才不会串到 Codex）。
+            .route(
+                "/opencode/v1/chat/completions",
+                post(handlers::handle_opencode_chat_completions),
+            )
+            .route(
+                "/openclaw/v1/chat/completions",
+                post(handlers::handle_openclaw_chat_completions),
+            )
+            .route(
+                "/hermes/v1/chat/completions",
+                post(handlers::handle_hermes_chat_completions),
+            )
+            // 同一前缀下的 Anthropic Messages 端点：这三个应用的上游也可能配成
+            // Anthropic 协议（如 OpenClaw 的 `api: anthropic-messages`），此时
+            // 客户端会在 base_url 后追加 `/messages`。
+            .route(
+                "/opencode/v1/messages",
+                post(handlers::handle_opencode_messages),
+            )
+            .route(
+                "/openclaw/v1/messages",
+                post(handlers::handle_openclaw_messages),
+            )
+            .route(
+                "/hermes/v1/messages",
+                post(handlers::handle_hermes_messages),
+            )
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
             .with_state(self.state.clone())

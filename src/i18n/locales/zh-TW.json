@@ -1501,7 +1501,15 @@
     "pricingModelSourceInherit": "繼承全域預設",
     "pricingModelSourceRequest": "請求模型",
     "pricingModelSourceResponse": "回傳模型",
-    "pricingModelSourceHint": "選擇依請求模型還是回傳模型進行定價比對"
+    "pricingModelSourceHint": "選擇依請求模型還是回傳模型進行定價比對",
+    "quotaRelay": "訂閱配額接力",
+    "quotaRelayDesc": "開啟本地路由後，本週期額度用盡會自動接力到下一個未超限的供應商。",
+    "maxTokensCycle": "週期 Token 上限",
+    "maxTokensCyclePlaceholder": "留空表示不限量",
+    "cycleDurationHours": "週期時長（小時）",
+    "cycleDurationHoursPlaceholder": "如 5",
+    "payAsYouGo": "按量付費兜底",
+    "payAsYouGoHint": "所有週期額度耗盡時才會使用該供應商；週期額度恢復後自動切回。"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

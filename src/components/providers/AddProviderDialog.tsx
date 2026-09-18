@@ -174,6 +174,10 @@ export function AddProviderDialog({
         iconColor: values.iconColor?.trim() || undefined,
         ...(values.presetCategory ? { category: values.presetCategory } : {}),
         ...(values.meta ? { meta: values.meta } : {}),
+        // 订阅配额接力字段（providers 表真实列）
+        maxTokensCycle: values.maxTokensCycle,
+        cycleDurationHours: values.cycleDurationHours,
+        payAsYouGo: values.payAsYouGo,
       };
       if (appId === "claude-desktop" && values.presetId) {
         const presetIndex = parseInt(

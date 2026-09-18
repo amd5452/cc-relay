@@ -38,6 +38,12 @@ pub enum ProxyError {
     #[error("未配置供应商")]
     NoProvidersConfigured,
 
+    /// 所有周期付费供应商的本周期额度都已耗尽，且没有配置可用的
+    /// 按量付费兜底供应商。返回 429 让客户端自行退避重试：等周期窗口
+    /// 滚动过去后，下一个请求会自动重新选路成功。
+    #[error("所有供应商的本周期额度已耗尽，且未配置按量付费兜底供应商 (all provider quotas exhausted for the current cycle)")]
+    QuotaExhausted,
+
     #[allow(dead_code)]
     #[error("Provider不健康: {0}")]
     ProviderUnhealthy(String),
@@ -140,6 +146,7 @@ impl IntoResponse for ProxyError {
                     ProxyError::ProviderUnhealthy(_) => {
                         (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
                     }
+                    ProxyError::QuotaExhausted => (StatusCode::TOO_MANY_REQUESTS, self.to_string()),
                     ProxyError::MaxRetriesExceeded => {
                         (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
                     }

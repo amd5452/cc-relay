@@ -178,7 +178,12 @@ export function ProxyTabContent({
               )}
 
               <Tabs defaultValue="claude" className="w-full">
-                <TabsList className="grid w-full grid-cols-4">
+                <TabsList
+                  className="grid w-full"
+                  style={{
+                    gridTemplateColumns: `repeat(${FAILOVER_APPS.length}, minmax(0, 1fr))`,
+                  }}
+                >
                   {FAILOVER_APPS.map(({ id, label }) => (
                     <TabsTrigger key={id} value={id}>
                       {label}

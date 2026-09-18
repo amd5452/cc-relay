@@ -32,6 +32,7 @@ import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
 import { BasicFormFields } from "./BasicFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { ProviderQuotaConfig } from "./ProviderQuotaConfig";
 import {
   grokBuildOfficialPreset,
   grokBuildProviderPresets,
@@ -97,6 +98,22 @@ export function GrokBuildProviderForm({
   const [isPartner, setIsPartner] = useState(
     initialData?.meta?.isPartner ?? false,
   );
+  /** 订阅配额接力：周期上限 / 周期时长 / 按量付费兜底。 */
+  const [quotaConfig, setQuotaConfig] = useState<{
+    maxTokensCycle?: string;
+    cycleDurationHours?: string;
+    payAsYouGo: boolean;
+  }>(() => ({
+    maxTokensCycle:
+      initialData?.maxTokensCycle !== undefined
+        ? String(initialData.maxTokensCycle)
+        : undefined,
+    cycleDurationHours:
+      initialData?.cycleDurationHours !== undefined
+        ? String(initialData.cycleDurationHours)
+        : undefined,
+    payAsYouGo: initialData?.payAsYouGo ?? false,
+  }));
   const [partnerPromotionKey, setPartnerPromotionKey] = useState<string>();
   const [profile, setProfile] = useState(initialConfig.model);
   const [upstreamModel, setUpstreamModel] = useState(
@@ -413,6 +430,16 @@ export function GrokBuildProviderForm({
       presetCategory: category ?? "custom",
       isPartner,
       meta,
+      // 订阅配额接力字段（providers 表真实列）
+      maxTokensCycle:
+        Number(quotaConfig.maxTokensCycle) > 0
+          ? Number(quotaConfig.maxTokensCycle)
+          : undefined,
+      cycleDurationHours:
+        Number(quotaConfig.cycleDurationHours) > 0
+          ? Number(quotaConfig.cycleDurationHours)
+          : undefined,
+      payAsYouGo: quotaConfig.payAsYouGo,
     };
 
     await onSubmit(payload);
@@ -553,6 +580,8 @@ export function GrokBuildProviderForm({
             </FormItem>
           )}
         />
+
+        <ProviderQuotaConfig quota={quotaConfig} onChange={setQuotaConfig} />
 
         {showButtons && (
           <div className="flex justify-end gap-2">

@@ -40,6 +40,9 @@ pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
         // 未配置供应商：503 Service Unavailable
         ProxyError::NoProvidersConfigured => 503,
 
+        // 本周期配额耗尽：429 Too Many Requests（客户端退避后重试，窗口滚动即可恢复）
+        ProxyError::QuotaExhausted => 429,
+
         // 重试耗尽：503 Service Unavailable
         ProxyError::MaxRetriesExceeded => 503,
 

@@ -8,6 +8,9 @@ describe("ProxyTabContent failover apps", () => {
       "codex",
       "gemini",
       "grokbuild",
+      "opencode",
+      "openclaw",
+      "hermes",
     ]);
   });
 });

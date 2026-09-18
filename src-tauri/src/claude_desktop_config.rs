@@ -19,7 +19,12 @@ const CONFIG_FILE: &str = "claude_desktop_config.json";
 #[cfg(any(target_os = "macos", windows, test))]
 const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
-const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
+/// Claude Desktop gateway 的路径前缀。
+///
+/// `pub(crate)` 是为了让 `services::proxy::proxy_base_url_for_app` 复用同一个常量：
+/// 该函数既供 takeover 写入、也供界面展示，两边必须同源，否则界面会显示一个
+/// 并不存在的地址。
+pub(crate) const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
 const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
 const MIMO_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 const MIMO_TOOL_CALL_THINKING_PLACEHOLDER: &str = "tool call";

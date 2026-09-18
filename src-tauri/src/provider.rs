@@ -41,6 +41,28 @@ pub struct Provider {
     #[serde(default)]
     #[serde(rename = "inFailoverQueue")]
     pub in_failover_queue: bool,
+    /// 周期内 Token 上限（如 1_000_000）。`None` 或 <= 0 表示不限量。
+    ///
+    /// 该字段只参与本地代理的内存路由判定，**绝不写入各家智能体的 live 配置**。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "maxTokensCycle")]
+    pub max_tokens_cycle: Option<i64>,
+    /// 周期时长（小时，如 5.0）。仅在配置了 `max_tokens_cycle` 时有意义。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "cycleDurationHours")]
+    pub cycle_duration_hours: Option<f64>,
+    /// 当前周期的起始时间戳（Unix 秒）。用于计算窗口期与判断是否重置。
+    ///
+    /// 运行期由本地代理在「周期过期后的首个请求」写回，用户无需手工填写。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "cycleStartTimestamp")]
+    pub cycle_start_timestamp: Option<i64>,
+    /// 是否按量付费（兜底供应商）。
+    ///
+    /// 选路优先级：周期付费且未超限 → 按量付费兜底 → 全部不可用时返回错误。
+    #[serde(default)]
+    #[serde(rename = "payAsYouGo")]
+    pub pay_as_you_go: bool,
 }
 
 impl Provider {
@@ -64,7 +86,21 @@ impl Provider {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            max_tokens_cycle: None,
+            cycle_duration_hours: None,
+            cycle_start_timestamp: None,
+            pay_as_you_go: false,
         }
+    }
+
+    /// 该供应商是否配置了有效的周期额度（即「周期付费」）。
+    ///
+    /// 上限与周期时长必须同时为正数才成立；任一缺失都按「不限量」处理，
+    /// 这样未配置额度的老数据行为与改造前完全一致。
+    pub fn cycle_limit(&self) -> Option<(i64, f64)> {
+        let max_tokens = self.max_tokens_cycle.filter(|v| *v > 0)?;
+        let duration_hours = self.cycle_duration_hours.filter(|v| *v > 0.0)?;
+        Some((max_tokens, duration_hours))
     }
 
     pub fn is_codex_oauth(&self) -> bool {
@@ -812,6 +848,10 @@ impl UniversalProvider {
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
+            max_tokens_cycle: None,
+            cycle_duration_hours: None,
+            cycle_start_timestamp: None,
+            pay_as_you_go: false,
         })
     }
 
@@ -877,6 +917,10 @@ requires_openai_auth = true"#
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
+            max_tokens_cycle: None,
+            cycle_duration_hours: None,
+            cycle_start_timestamp: None,
+            pay_as_you_go: false,
         })
     }
 
@@ -912,6 +956,10 @@ requires_openai_auth = true"#
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
+            max_tokens_cycle: None,
+            cycle_duration_hours: None,
+            cycle_start_timestamp: None,
+            pay_as_you_go: false,
         })
     }
 }

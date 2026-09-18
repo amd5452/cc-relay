@@ -198,6 +198,10 @@ mod tests {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            max_tokens_cycle: None,
+            cycle_duration_hours: None,
+            cycle_start_timestamp: None,
+            pay_as_you_go: false,
         }
     }
 
@@ -215,6 +219,10 @@ mod tests {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
+            max_tokens_cycle: None,
+            cycle_duration_hours: None,
+            cycle_start_timestamp: None,
+            pay_as_you_go: false,
         }
     }
 

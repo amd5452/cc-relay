@@ -283,6 +283,10 @@ export function EditProviderDialog({
       meta: provider.meta,
       icon: provider.icon,
       iconColor: provider.iconColor,
+      maxTokensCycle: provider.maxTokensCycle,
+      cycleDurationHours: provider.cycleDurationHours,
+      cycleStartTimestamp: provider.cycleStartTimestamp,
+      payAsYouGo: provider.payAsYouGo,
     };
   }, [
     open, // 修复：编辑保存后再次打开显示旧数据，依赖 open 确保每次打开时重新读取最新 provider 数据
@@ -319,6 +323,13 @@ export function EditProviderDialog({
         ...(values.presetCategory ? { category: values.presetCategory } : {}),
         // 保留或更新 meta 字段
         ...(values.meta ? { meta: values.meta } : {}),
+        // 订阅配额接力字段：必须显式赋值，否则上面的 `...provider`
+        // 会把用户在表单里的「清空」操作吃掉。
+        // cycleStartTimestamp 由本地代理维护，这里只做透传。
+        maxTokensCycle: values.maxTokensCycle,
+        cycleDurationHours: values.cycleDurationHours,
+        cycleStartTimestamp: provider.cycleStartTimestamp,
+        payAsYouGo: values.payAsYouGo,
       };
 
       await onSubmit({
