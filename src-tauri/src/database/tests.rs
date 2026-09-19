@@ -685,11 +685,28 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         "skills migration snapshot should preserve legacy app mapping"
     );
 
-    // v3.9+ 新增：proxy_config 三行 seed 必须存在（否则 UI 会查不到默认值）
-    let proxy_rows: i64 = conn
-        .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
-        .expect("count proxy_config rows");
-    assert_eq!(proxy_rows, 4);
+    // v3.9+ 新增：每个受支持应用都必须有 proxy_config 的 seed 行（否则 UI 查不到默认值）。
+    //
+    // 断言「具体应用存在」而不是总行数：将来再新增智能体时这里不必跟着改，
+    // 也就不会出现「只加了一个应用、旧断言却莫名其妙变红」的情况。
+    for app in [
+        "claude",
+        "codex",
+        "gemini",
+        "grokbuild",
+        "opencode",
+        "openclaw",
+        "hermes",
+    ] {
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM proxy_config WHERE app_type = ?1",
+                [app],
+                |r| r.get(0),
+            )
+            .expect("count proxy_config rows for app");
+        assert_eq!(rows, 1, "proxy_config 缺少 {app} 的 seed 行");
+    }
 
     // model_pricing 应具备默认数据（迁移时会 seed）
     let pricing_rows: i64 = conn
