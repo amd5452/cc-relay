@@ -2840,7 +2840,10 @@ function ProviderFormFull({
             (appId === "opencode" ||
               appId === "openclaw" ||
               appId === "hermes") && (
-              <ProviderQuotaConfig quota={quotaConfig} onChange={setQuotaConfig} />
+              <ProviderQuotaConfig
+                quota={quotaConfig}
+                onChange={setQuotaConfig}
+              />
             )}
 
           {showButtons && (

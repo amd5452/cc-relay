@@ -191,10 +191,7 @@ export function ProviderAdvancedConfig({
       </div>
 
       {/* 订阅配额接力：改用共用组件，单位换算与文案只有一处实现 */}
-      <ProviderQuotaConfig
-        quota={quotaConfig}
-        onChange={onQuotaConfigChange}
-      />
+      <ProviderQuotaConfig quota={quotaConfig} onChange={onQuotaConfigChange} />
     </div>
   );
 }
